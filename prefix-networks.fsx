@@ -1,6 +1,6 @@
 #if INTERACTIVE
 #else
-module PrefixNetwork
+module PrefixNetworks
 #endif
 
 (* We don't actually use these, but they're helpful for error finding. *)
@@ -48,7 +48,7 @@ module Net =
     | x :: xs ->
       let ph = (List.map phase >> List.max) is
       let j = { fans = (ph, List.map wire is) :: fans x; wire = wire x; phase = ph + 1 }
-      j :: List.map (fun k -> { fans = k.fans; wire = k.wire; phase = ph + 1 }) xs
+      j :: List.map (fun k -> { fans = fans k; wire = wire k; phase = ph + 1 }) xs
 
   let getNets f n =
     f netFan (netsz n)
@@ -65,8 +65,19 @@ module PList =
   let init xs =
     (List.rev >> List.tail >> List.rev) xs
 
-  (* Robust, tail-recursive list splitting. *)
-  let splitAt m xs =
+  (* Tiggers a bug in Mono:
+       Stack overflow in unmanaged: IP: 0x109768bcb, fault addr: 0x7fff55e62ff8
+       error FS0193: internal error: Object reference not set to an instance of an object*)
+  let rec splitAt0 m xs =
+    match xs with
+      | [] -> [], []
+      | x :: xs when m = 0 -> [x], xs
+      | x :: xs ->
+        let lxs, rxs = splitAt0 (m - 1) xs
+        x :: lxs, rxs
+
+  (* Triggers the same bug when used in skl. *)
+  let splitAt1 m xs =
     let rec split m lxs rxs =
       match rxs with
         | []                 -> List.rev lxs, rxs
@@ -76,8 +87,24 @@ module PList =
       | [] -> [], []
       | x :: xs -> split m [x] xs
 
+  let take m =
+    List.mapi (fun i x -> if i < m then Some x else None) >> List.choose id
+
+  let skip m =
+    List.mapi (fun i x -> if i >= m then Some x else None) >> List.choose id
+
+  (* O(2n), but at least does not crash or stack-overflow. *)
+  let splitAt2 m xs =
+    take m xs, skip m xs
+
+  (* For now, use the O(2n) version. *)
+  let splitAt = splitAt2
+
   let toLast f xs =
     init xs @ [f (last xs)]
+
+  let toLasts f xs =
+    [ for is, l in List.zip (List.map init xs) (f (List.map last xs)) -> is @ [l] ]
 
   let toTail f xs =
     List.head xs :: f (List.tail xs)
@@ -93,27 +120,29 @@ let rec skl f xs =
     | [] -> []
     | [x] -> xs
     | xs ->
-      let lxs, rxs = splitAt ((List.length xs) / 2) xs
+      let lxs, rxs = splitAt2 ((List.length xs) / 2) xs
       let lys, rys = skl f lxs, skl f rxs (* Recursive computation. *)
       init lys @ f (last lys :: rys) (* Combination and propagation to the bottom right. *)
 
-(* Slow and prone to stack overflows. *)
-let rec split2 ds xs =
-  match ds, xs with
-    | [], _ -> [xs]
-    | d :: ds, xs ->
+(* Slow and prone to stack-overflow. *)
+let rec split0 ds xs =
+  match ds with
+    | [] -> []
+    | d :: ds ->
       let lxs, rxs = splitAt d xs
-      lxs :: split2 ds rxs
+      lxs :: split0 ds rxs
 
-(* TODO: No stack overflows since tail-recusrive, but still slow. *)
-let split ds xs =
+(* No stack overflows since tail-recusrive, but still slow. *)
+let split1 ds xs =
   let rec spl ds xs ss =
-    match ds, xs with
-      | [], _ -> List.rev ss
-      | d :: ds, xs ->
+    match ds with
+      | [] -> List.rev ss
+      | d :: ds ->
         let lxs, rxs = splitAt d xs
         spl ds rxs (lxs :: ss)
   spl ds xs []
+
+let split = split1
 
 let shift xs =
   match xs with
@@ -124,15 +153,26 @@ let shift xs =
 (* Haskell's f . g corresponds to F#'s f << g. *)
 let build0 ws p f =
   split ws >> List.map (ser f) >>
-  toInit (toLast (p f)) >> List.concat >>
+  toInit (toLasts (p f)) >> List.concat >>
   split (shift ws) >> toTail (List.map f) >> List.concat
 
 let twos n =
-  List.replicate n (n / 2) @ [n % 2]
+  List.replicate (n / 2) 2 @ [n % 2]
 
 (* Brent-Kung pattern *)
-let rec bK0 f xs =
+let rec bk0 f xs =
   match xs with
     | [] -> []
     | [x] -> xs
-    | xs -> build0 (twos (List.length xs)) bK0 f xs
+    | xs -> build0 (twos (List.length xs)) bk0 f xs
+
+let rec twos' = function
+  | 1 -> [1]
+  | 2 -> [1; 1]
+  | n -> 2 :: twos' (n - 2)
+
+let rec bk1 f xs =
+  match xs with
+    | [] -> []
+    | [x] -> xs
+    | xs -> build0 (twos' (List.length xs)) bk1 f xs
