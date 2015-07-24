@@ -7,30 +7,37 @@ module Cache =
     printfn "Creating empty cache..."
     new Cache<_,_>()
 
-  let get (d : Cache<_,_>) k  =
+  let get (d: Cache<_,_>) k  =
     match d.TryGetValue k with
       | true, v -> Some v
       | _ -> None
 
-  let put (d : Cache<_,_>) k v =
+  let put (d: Cache<_,_>) k v =
     d.[k] <- v; v
+
+  let putOrGet (d: Cache<'k,'v>) (k: 'k) (v: 'v) =
+    d.GetOrAdd(k, v)
+
+  let putOrCall (d: Cache<'k, Lazy<'v>>) (k: 'k) (f: 'k -> 'v) =
+    d.GetOrAdd(k, lazy f k)
 
 (* Typical implementation of fib. *)
 let rec fib0 = function
   | 0 | 1 -> 1
   | n -> fib0 (n - 1) + fib0 (n - 2)
 
-(* Doesn't work for recursive calls. *)
+(* Does, of course, not work for recursive calls. *)
 let memoize0 f =
   let d = Cache.empty() (* Initializes a new cache on every call. *)
   fun k ->
     match Cache.get d k with
       | Some v -> v
-      | None -> Cache.put d k (f k)
+      | None -> printfn "Computing f %d" k; Cache.put d (f k) k
 
 let rec fix f x =
   f (fix f) x
 
+(* Continuation based implementation of fib. *)
 let fib1 f n =
   match n with
     | 0 | 1 -> 1
@@ -44,22 +51,7 @@ let fib2 f n =
 
 (* No memoization, instead hundreds of new dictionary allocations... *)
 let fibmem0 =
-  fix (memoize0 >> fib1)
-
-let rec fix0 f x =
-  lazy f (fix0 f) x
-
-let force (l: Lazy<_>) =
-  l.Value
-
-let fib3 f n =
-  match n with
-    | 0 | 1 -> 1
-    | _ -> force (f (n - 2)) + force (f (n - 1))
-
-(* The same using lazy computations. Still no memoization. *)
-let fibmem1 =
-    fix0 (memoize0 >> fib3)
+  fix (memoize0 >> fib2)
 
 (* For partial application. *)
 let (!!) xs n =
@@ -70,21 +62,18 @@ let memoize1 f =
   (!!) (Seq.initInfinite (fun n -> printfn "Computing f %d"n; f n) |> Seq.cache)
 
 (* Also doesn't work, no difference to the above approaches. *)
-let fibmem2 =
-  fix0 (memoize1 >> fib3)
+let fibmem1 =
+  fix (memoize1 >> fib1)
 
-(* But this does, because Seq.cache side-effects. *)
-let fibmem3 =
+let fibmem2 =
   memoize0 (fix fib2)
 
 (* And so does this, which also is more general. *)
-let getOrComp d f k =
+let memoize d f k =
   match Cache.get d k with
     | Some v -> v
     | None -> printfn "Computing f %d" k; Cache.put d (f k) k
 
-let memoize f =
-  fix (f >> getOrComp (Cache.empty()))
-
-let fibmem4 (x: uint64) =
-  (memoize fib2) x
+(* Something is odd here, some small numbers are recomputed. *)
+let fibmem3 =
+  fix (fib2 >> memoize (Cache.empty()))
