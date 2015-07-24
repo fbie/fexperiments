@@ -1,84 +1,90 @@
-open System.Collections.Generic
-(* Some functions on Dictionary that have a functional looks. *)
-module Dict =
-  let emptyDict() =
-    printfn "Creating empty dictionary..."
-    new Dictionary<_,_>()
 
-  let get k (d : Dictionary<_,_>) =
+(* Some functions on Dictionary that have a functional looks. *)
+module Cache =
+  type Cache<'k, 'v> = System.Collections.Concurrent.ConcurrentDictionary<'k, 'v>
+
+  let empty() =
+    printfn "Creating empty cache..."
+    new Cache<_,_>()
+
+  let get (d : Cache<_,_>) k  =
     match d.TryGetValue k with
       | true, v -> Some v
       | _ -> None
 
-  let put k v (d : Dictionary<_,_>) =
+  let put (d : Cache<_,_>) k v =
     d.[k] <- v; v
 
 (* Typical implementation of fib. *)
-let rec fib = function
+let rec fib0 = function
   | 0 | 1 -> 1
-  | n -> fib (n - 1) + fib (n - 2)
+  | n -> fib0 (n - 1) + fib0 (n - 2)
 
 (* Doesn't work for recursive calls. *)
-let memoize f =
-  let d = Dict.emptyDict()
+let memoize0 f =
+  let d = Cache.empty() (* Initializes a new cache on every call. *)
   fun k ->
-    match Dict.get k d with
+    match Cache.get d k with
       | Some v -> v
-      | None -> Dict.put k (f k) d
+      | None -> Cache.put d k (f k)
 
 let rec fix f x =
   f (fix f) x
 
-let fib' f n =
+let fib1 f n =
   match n with
     | 0 | 1 -> 1
     | _ -> f (n - 1) + f (n - 2)
 
-(* No memoization, instead hundreds of new dictionary allocations... *)
-let fibmem =
-  fix (memoize >> fib')
+(* Uses uint64 to handle larger n. *)
+let fib2 f n =
+  match n with
+    | 0UL | 1UL -> 1UL
+    | _ -> f (n - 1UL) + f (n - 2UL)
 
-let rec fix' f x =
-  lazy f (fix' f) x
+(* No memoization, instead hundreds of new dictionary allocations... *)
+let fibmem0 =
+  fix (memoize0 >> fib1)
+
+let rec fix0 f x =
+  lazy f (fix0 f) x
 
 let force (l: Lazy<_>) =
   l.Value
 
-let fib'' f n =
+let fib3 f n =
   match n with
     | 0 | 1 -> 1
     | _ -> force (f (n - 2)) + force (f (n - 1))
 
 (* The same using lazy computations. Still no memoization. *)
-let fibmem' =
-    fix' (memoize >> fib'')
+let fibmem1 =
+    fix0 (memoize0 >> fib3)
 
 (* For partial application. *)
 let (!!) xs n =
   Seq.nth n xs
 
-(* Only int -> 'a memoization. *)
-let memoize' f =
-  let m = Seq.initInfinite (fun n -> printfn "Computing f %d"n; f n) |> Seq.cache
-  (!!) m
+(* Only int -> 'a. *)
+let memoize1 f =
+  (!!) (Seq.initInfinite (fun n -> printfn "Computing f %d"n; f n) |> Seq.cache)
 
 (* Also doesn't work, no difference to the above approaches. *)
-let fibmem'' =
-  fix (memoize' >> fib')
+let fibmem2 =
+  fix0 (memoize1 >> fib3)
 
-(* But this does! Or does it? *)
-let fibmem''' =
-  memoize' (fix fib')
+(* But this does, because Seq.cache side-effects. *)
+let fibmem3 =
+  memoize0 (fix fib2)
 
 (* And so does this, which also is more general. *)
-let memoizeDict d f k =
-  match Dict.get k d with
+let getOrComp d f k =
+  match Cache.get d k with
     | Some v -> v
-    | None -> Dict.put k (f k) d
+    | None -> printfn "Computing f %d" k; Cache.put d (f k) k
 
-let memoize'' f =
-  let d = Dict.emptyDict()
-  fix (f >> fun f n -> printfn "Computing f %d"n; memoizeDict d f n)
+let memoize f =
+  fix (f >> getOrComp (Cache.empty()))
 
-let fibmem'''' =
-  memoize'' fib'
+let fibmem4 (x: uint64) =
+  (memoize fib2) x
