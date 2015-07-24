@@ -30,6 +30,17 @@ let delay ds =
 let checkDelay p n =
   p delay [ for i in 1..n -> 0 ]
 
+let wdFan wds =
+  match wds with
+    | [] -> []
+    | [wd] -> wds
+    | _ ->
+      let ws, ds = List.unzip wds
+      List.map (fun w -> w, List.max ds + 1) ws
+
+let zdel n =
+  [ for i in 1..n -> (i, 0) ]
+
 (* For later visualization of networks. *)
 module Net =
   type Net = { fans: (int * int list) list; wire: int; phase: int }
@@ -103,6 +114,9 @@ module PList =
   let toLast f xs =
     init xs @ [f (last xs)]
 
+  (* Applys f to the list of all last elements
+     of the lists in xs and puts the resulting
+     elements back again. *)
   let toLasts f xs =
     [ for is, l in List.zip (List.map init xs) (f (List.map last xs)) -> is @ [l] ]
 
@@ -124,6 +138,15 @@ let rec skl f xs =
       let lys, rys = skl f lxs, skl f rxs (* Recursive computation. *)
       init lys @ f (last lys :: rys) (* Combination and propagation to the bottom right. *)
 
+let rec sklPar f xs =
+  match xs with
+    | [] -> []
+    | [x] -> xs
+    | xs ->
+      let lxs, rxs = splitAt2 ((List.length xs) / 2) xs
+      let [| lys; rys |] = Array.Parallel.map (sklPar f) [| lxs; rxs |]
+      init lys @ f (last lys :: rys) (* Combination and propagation to the bottom right. *)
+
 (* Slow and prone to stack-overflow. *)
 let rec split0 ds xs =
   match ds with
@@ -132,7 +155,7 @@ let rec split0 ds xs =
       let lxs, rxs = splitAt d xs
       lxs :: split0 ds rxs
 
-(* No stack overflows since tail-recusrive, but still slow. *)
+(* No stack overflows since tail-recursive, but still slow. *)
 let split1 ds xs =
   let rec spl ds xs ss =
     match ds with
@@ -176,3 +199,18 @@ let rec bk1 f xs =
     | [] -> []
     | [x] -> xs
     | xs -> build0 (twos' (List.length xs)) bk1 f xs
+
+module Benchmark =
+  let test pp n =
+    pp (mkFan (@)) [ for i in 1..n -> [i] ] |> ignore
+
+  let time f =
+    let t = System.Diagnostics.Stopwatch.StartNew()
+    f()
+    t.Elapsed.TotalMilliseconds
+
+  let benchmark m f =
+    let es = List.init (m + 3) (fun _ -> time f) |> List.tail |> List.tail |> List.tail
+    let avg = List.average es
+    let stdev = List.map (fun x -> (x - avg) ** 2.0) es |> List.average
+    avg, stdev
