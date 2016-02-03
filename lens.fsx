@@ -5,7 +5,7 @@
 (* The general lens type. *)
 type Lens<'a, 'b> = { get : 'a -> 'b; set : 'a -> 'b -> 'a }
 
-(* Access get and set functions more functional. *)
+(* Access get and set functions more functionally. *)
 let get l = l.get
 let set l = l.set
 
@@ -15,7 +15,7 @@ let sndLens = { get = snd; set = fun (a, b) c -> (a, c) }
 
 (* Composition of lenses. *)
 let compGet f g = get f >> get g
-let compSet f g a c = set f a (set g (get f a) c) (* Get sub-structure, set it, set it in the main structure. *)
+let compSet f g a c = set f a (set g (get f a) c)
 
 (* Get and update nested data structures via composed lense. *)
 let compLens f g = { get = compGet f g; set = compSet f g }
