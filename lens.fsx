@@ -1,7 +1,3 @@
-(* I did not quite get the buzz about lenses, so I
-   had to see myself, why composition of lenses
-   makes sense and how it works. *)
-
 (* The general lens type. *)
 type Lens<'a, 'b> = { get : 'a -> 'b; set : 'a -> 'b -> 'a }
 
@@ -20,6 +16,7 @@ let compSet f g a c = set f a (set g (get f a) c)
 (* Get and update nested data structures via composed lense. *)
 let compLens f g = { get = compGet f g; set = compSet f g }
 let (>>) f g = compLens f g
+let (<<) g f = f >> g
 
 let fstSnd<'a, 'b> = fstLens >> sndLens
 let sndFst<'a, 'b> = sndLens >> fstLens
